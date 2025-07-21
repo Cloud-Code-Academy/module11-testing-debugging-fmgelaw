@@ -32,17 +32,24 @@ public with sharing class LeadTriggerHandler {
 	 */
 	public static void handleTitleNormalization(List<Lead> leadsToNormalize) {
 		for (Lead ld : leadsToNormalize) {
-			if (ld.title == 'vp' || ld.title.contains('v.p.') || ld.title.contains('vice president')) {
+			if (ld.title == 'vp' || 
+				ld.title.contains('v.p.') || 
+				ld.title.contains('vice president')) {
 				ld.Title = 'Vice President';
 			} else if (
 				ld.title.contains('mgr') ||
 				ld.title.contains('manage') ||
-				ld.title.contains('head of department')
-			) {
-				ld.Title = 'Manager';
-			} else if (ld.title.contains('exec') || ld.title == 'chief' || ld.title.contains('head')) {
+				ld.title.contains('head of department')) {
+				ld.Title = 'Manager';	
+			} else if (
+				ld.title.contains('exec') || 
+				ld.title == 'chief' ||
+				ld.title == 'head') {
 				ld.Title = 'Executive';
-			} else if (ld.title.contains('assist') || ld.title.contains('deputy') || ld.title == 'jr') {
+			} else if (
+				ld.title.contains('assist') || 
+				ld.title.contains('deputy') || 
+				ld.title == 'jr') {
 				ld.Title = 'Assistant';
 			}
 		}
@@ -65,18 +72,18 @@ public with sharing class LeadTriggerHandler {
 
 			// Check and add points based on the specified conditions
 			if (ld.LeadSource == 'Website' && ld.Email != null) {
-				score = 3;
+				score += 3;
 			}
 
 			if (ld.Phone != null) {
-				score = 5;
+				score += 5;
 			}
 
 			if (ld.Industry == 'Technology') {
-				score = 10;
+				score += 10;
 			}
 
-			ld.Lead_Score__c = score; // Set the computed score back to the lead
+			ld.Lead_Score__c = (score <= 18)? score : 18; // Set the computed score back to the lead
 		}
 	}
 
@@ -103,22 +110,33 @@ public with sharing class LeadTriggerHandler {
 	 * - One of the errors is recursion related. Check if the lead is already converted or check if the email has changed/is null
 	 * - One of the errors is map related. Make sure you are using the correct contact map key
 	 */
-	public static void handleLeadAutoConvert(List<Lead> leads) {
+	public static void handleLeadAutoConvert(List<Lead> leads, Map<id, Lead> oldLeadsMap) {
 		// Step 1: Gather all lead emails
         Map<Id,String> leadToEmailMap = new Map<Id,String>();
+		//if (oldLeadsMap != null)
 		for (Lead lead : leads) {
-			leadToEmailMap.put(lead.Id, lead.Email);
-		}
+			if (lead.Email == null || lead.IsConverted) {
+        		continue;
+    		}
 
+			if (oldLeadsMap != null && lead.Email != oldLeadsMap.get(lead.Id).Email) {
+				leadToEmailMap.put(lead.Id, lead.Email);
+			} else if (oldLeadsMap == null) {
+				leadToEmailMap.put(lead.Id, lead.Email);
+			}
+		}
 		// Step 2: Find matching contacts based on email
 		Map<String, Contact> emailToContactMap = new Map<String, Contact>();
-		for (Contact c : [SELECT Id, Email, AccountId FROM Contact WHERE Email IN :leadToEmailMap.values()]) {
-			if (!emailToContactMap.containsKey(c.Email)) {
-				emailToContactMap.put(c.Email, c);
+		List<Contact> conts = [SELECT Id, Email, AccountId FROM Contact WHERE Email IN :leadToEmailMap.values()];
+
+		for (Contact con : conts) {
+			String email = con.Email.toLowerCase();
+			if (!emailToContactMap.containsKey(email)) {
+				emailToContactMap.put(email, con);
 			} else {
 				// If we found another contact with the same email, we don't auto-convert.
 				// So we remove the email from the map.
-				emailToContactMap.remove(c.Email);
+				emailToContactMap.remove(email);
 			}
 		}
 
@@ -126,7 +144,7 @@ public with sharing class LeadTriggerHandler {
 		List<Database.LeadConvert> leadConverts = new List<Database.LeadConvert>();
 		LeadStatus convertStatus = [SELECT Id, MasterLabel FROM LeadStatus WHERE IsConverted = TRUE LIMIT 1];
 		for (Id leadId : leadToEmailMap.keySet()) {
-            String leadEmail = leadToEmailMap.get(leadId);
+            String leadEmail = leadToEmailMap.get(leadId).toLowerCase();
 			if (emailToContactMap.containsKey(leadEmail)) {
 				Database.LeadConvert lc = new Database.LeadConvert();
 				lc.setLeadId(leadId);
@@ -137,7 +155,7 @@ public with sharing class LeadTriggerHandler {
 				leadConverts.add(lc);
 			}
 		}
-
+		System.debug(JSON.serializePretty(leadConverts));
 		if (!leadConverts.isEmpty()) {
 			List<Database.LeadConvertResult> lcrs = Database.convertLead(leadConverts);
 		}
